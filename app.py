@@ -2,10 +2,10 @@ import streamlit as st
 import pandas as pd
 import io
 
-st.set_page_config(page_title="New Central 2026 0629 標準轉換器 (WoW%)", layout="wide")
+st.set_page_config(page_title="New Central 2026 0629 標準轉換器 (全百分比修正版)", layout="wide")
 
-st.title("📊 New Central 標準數據轉換工具 (WoW % 修正版)")
-st.write("此版本已將 WoW 的 RN 與 REV 計算邏輯修正為 **百分比 (%) 成長率**。")
+st.title("📊 New Central 標準數據轉換工具 (REV / ADR & 全百分比修正版)")
+st.write("此版本已修正 REV 與 ADR 計算邏輯，並將所有對比值（含 ADR WoW）全面轉換為**百分比 (%) 呈現（四捨五入）**。")
 
 # 1. 日期與名稱設定
 col1, col2 = st.columns(2)
@@ -21,7 +21,7 @@ uploaded_file = st.file_uploader("請上傳原始 Excel 檔案", type=["xlsx"])
 
 if uploaded_file is not None:
     try:
-        st.info("⚡ 正在嚴格依照 0629 百分比規則重組數據中...")
+        st.info("⚡ 正在嚴格校對 REV/ADR 數據並計算百分比中...")
         
         # 讀取資料
         xls = pd.ExcelFile(uploaded_file)
@@ -39,21 +39,26 @@ if uploaded_file is not None:
         lw_label = f"{lw_start.split('-')[1]}/{lw_start.split('-')[2]}-{lw_end.split('-')[1]}/{lw_end.split('-')[2]}"
         tw_label = f"{tw_start.split('-')[1]}/{tw_start.split('-')[2]}-{tw_end.split('-')[1]}/{tw_end.split('-')[2]}"
         
-        # 空的容器，用來裝垂直排版的列數據
         final_rows = []
         
-        # --- 通用處理計算 WoW % 的模組 ---
+        # --- 核心計算模組：修正 REV、ADR 與全百分比 WoW 邏輯 ---
         def calc_wow_metrics(lw_rn, lw_rev, tw_rn, tw_rev):
-            lw_adr = lw_rev / lw_rn if lw_rn > 0 else 0
-            tw_adr = tw_rev / tw_rn if tw_rn > 0 else 0
+            # 四捨五入基礎原始值
+            lw_rn_r = round(lw_rn, 2)
+            lw_rev_r = round(lw_rev, 2)
+            tw_rn_r = round(tw_rn, 2)
+            tw_rev_r = round(tw_rev, 2)
             
-            # WoW 百分比計算 (如果上週為 0，則呈現 0%)
-            wow_rn_pct = f"{(tw_rn - lw_rn) / lw_rn:.2%}" if lw_rn > 0 else "0.00%"
-            wow_rev_pct = f"{(tw_rev - lw_rev) / lw_rev:.2%}" if lw_rev > 0 else "0.00%"
-            # ADR 的 WoW 通常看增減金額值
-            wow_adr_diff = tw_adr - lw_adr
+            # 正確計算整體 ADR = 總營收 / 總房晚
+            lw_adr = round(lw_rev_r / lw_rn_r, 2) if lw_rn_r > 0 else 0
+            tw_adr = round(tw_rev_r / tw_rn_r, 2) if tw_rn_r > 0 else 0
             
-            return lw_rn, lw_rev, lw_adr, tw_rn, tw_rev, tw_adr, wow_rn_pct, wow_rev_pct, wow_adr_diff
+            # 全面改為百分比 (%) 呈現，並嚴格四捨五入
+            wow_rn_pct = f"{round(((tw_rn_r - lw_rn_r) / lw_rn_r) * 100, 2):.2f}%" if lw_rn_r > 0 else "0.00%"
+            wow_rev_pct = f"{round(((tw_rev_r - lw_rev_r) / lw_rev_r) * 100, 2):.2f}%" if lw_rev_r > 0 else "0.00%"
+            wow_adr_pct = f"{round(((tw_adr - lw_adr) / lw_adr) * 100, 2):.2f}%" if lw_adr > 0 else "0.00%"
+            
+            return lw_rn_r, lw_rev_r, lw_adr, tw_rn_r, tw_rev_r, tw_adr, wow_rn_pct, wow_rev_pct, wow_adr_pct
 
         # =========================================================================
         # 區塊一：MM概況
@@ -89,7 +94,7 @@ if uploaded_file is not None:
         oth_metrics = calc_wow_metrics(lw_oth['RN'].sum(), lw_oth['ordamount_afterdiscount'].sum(), tw_oth['RN'].sum(), tw_oth['ordamount_afterdiscount'].sum())
         final_rows.append(["", "others 總計"] + list(oth_metrics))
         
-        final_rows.append([""] * 11) # 空行
+        final_rows.append([""] * 11)
         
         # =========================================================================
         # 區塊二：城市&星級概況
@@ -137,7 +142,6 @@ if uploaded_file is not None:
                 s_metrics = calc_wow_metrics(lw_s['RN'].sum(), lw_s['ordamount_afterdiscount'].sum(), tw_s['RN'].sum(), tw_s['ordamount_afterdiscount'].sum())
                 final_rows.append(["", site] + list(s_metrics))
                 
-            # Total
             tot_metrics = calc_wow_metrics(lw_c_df['RN'].sum(), lw_c_df['ordamount_afterdiscount'].sum(), tw_c_df['RN'].sum(), tw_c_df['ordamount_afterdiscount'].sum())
             final_rows.append(["", "Total"] + list(tot_metrics))
             final_rows.append([""] * 11)
@@ -169,18 +173,18 @@ if uploaded_file is not None:
                 
                 m_name = emm if first else ""
                 
-                # EZ Share WoW 規則：量差用絕對值，佔比差用百分比點數(相減)
+                # EZ Share 數量 WoW 維持量差，佔比變動改為百分比點數變動 (四捨五入)
                 final_rows.append([
-                    "", m_name, d, lw_md, tw_md, tw_md - lw_md, 
-                    f"{l_ratio:.2%}", f"{t_ratio:.2%}", f"{(t_ratio - l_ratio):.2%}", "", ""
+                    "", m_name, d, round(lw_md, 2), round(tw_md, 2), round(tw_md - lw_md, 2), 
+                    f"{round(l_ratio * 100, 2):.2f}%", f"{round(t_ratio * 100, 2):.2f}%", f"{round((t_ratio - l_ratio) * 100, 2):.2f}%", "", ""
                 ])
                 first = False
                 
-            final_rows.append(["", "", "Total", lw_m_tot, tw_m_tot, tw_m_tot - lw_m_tot, "100.00%", "100.00%", "0.00%", "", ""])
+            final_rows.append(["", "", "Total", round(lw_m_tot, 2), round(tw_m_tot, 2), round(tw_m_tot - lw_m_tot, 2), "100.00%", "100.00%", "0.00%", "", ""])
 
         # 輸出處理
         out_df = pd.DataFrame(final_rows)
-        st.success("🎉 百分比格式報表轉換完成！")
+        st.success("🎉 全百分比且數值校正版報表轉換完成！")
         st.dataframe(out_df.fillna(""), use_container_width=True)
         
         output = io.BytesIO()
@@ -189,9 +193,9 @@ if uploaded_file is not None:
             out_df.to_excel(writer, sheet_name=sheet_title, index=False, header=False)
             
         st.download_button(
-            label="📥 下載修正版 Excel 報表",
+            label="📥 下載全百分比修正版 Excel 報表",
             data=output.getvalue(),
-            file_name=f"New_Central_周報_Pct_{tw_end.split('-')[1]}{tw_end.split('-')[2]}.xlsx",
+            file_name=f"New_Central_周報_AllPct_{tw_end.split('-')[1]}{tw_end.split('-')[2]}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
         
