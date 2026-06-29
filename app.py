@@ -2,10 +2,10 @@ import streamlit as st
 import pandas as pd
 import io
 
-st.set_page_config(page_title="New Central 2026 週報標準轉換器 (人民幣精準對齊版)", layout="wide")
+st.set_page_config(page_title="New Central 2026 週報標準轉換器 (人民幣 Raw Data 精準版)", layout="wide")
 
-st.title("📊 New Central 標準數據轉換工具 (Book Time + ADR=GMV/RN 最終對齊版)")
-st.write("此版本依據您的指示：以 **Book Time** 為時間篩選錨點、**ADR = GMV / RN**，並自動**剔除已取消訂單(OrderStatus='C')**以精準對齊 Excel 報表數字。")
+st.title("📊 New Central 標準數據轉換工具 (Raw Data 原始全量版)")
+st.write("此版本完全依據您的指示：以 **Book Time** 為時間篩選錨點、**ADR = 人民幣總 GMV / 總 RN**，且**不剔除任何數據**，直接以原始 Raw Data 進行統整。")
 
 # 1. 日期與名稱設定
 col1, col2 = st.columns(2)
@@ -38,15 +38,11 @@ uploaded_file = st.file_uploader("請上傳原始 Excel 檔案", type=["xlsx"])
 
 if uploaded_file is not None:
     try:
-        st.info("⚡ 正在過濾無效訂單、轉換人民幣並精準校正 ADR...")
+        st.info("⚡ 正在以 Raw Data 進行全量人民幣轉換與加權 ADR 計算...")
         
         # 讀取資料
         xls = pd.ExcelFile(uploaded_file)
         df = pd.read_excel(uploaded_file, sheet_name=xls.sheet_names[0])
-        
-        # 【核心修正 1】防呆過濾：Excel 週報必須剔除 OrderStatus == 'C' (已取消) 的訂單，數據才對得起來
-        if 'OrderStatus' in df.columns:
-            df = df[df['OrderStatus'] != 'C']
         
         # 以 Book Time 為篩選錨點
         df['Book Time'] = pd.to_datetime(df['Book Time'])
@@ -60,7 +56,7 @@ if uploaded_file is not None:
         lw_label = f"{lw_start.split('-')[1]}/{lw_start.split('-')[2]}-{lw_end.split('-')[1]}/{lw_end.split('-')[2]}"
         tw_label = f"{tw_start.split('-')[1]}/{tw_start.split('-')[2]}-{tw_end.split('-')[1]}/{tw_end.split('-')[2]}"
         
-        # 全面轉換 gmv 為人民幣
+        # 全面將 gmv 轉換為人民幣
         df['gmv_rmb'] = df.apply(lambda row: convert_to_rmb(row['gmv'], row['Currency']), axis=1)
 
         # --- 核心計算模組 ---
@@ -71,7 +67,7 @@ if uploaded_file is not None:
             lw_rev = round(lw_df['gmv_rmb'].sum(), 2)
             tw_rev = round(tw_df['gmv_rmb'].sum(), 2)
             
-            # 【核心修正 2】依您的指示：ADR = GMV (RMB) / RN
+            # 依據您的指示：ADR = 人民幣總 GMV / 總 RN
             lw_adr = round(lw_rev / lw_rn, 2) if lw_rn > 0 else 0.0
             tw_adr = round(tw_rev / tw_rn, 2) if tw_rn > 0 else 0.0
             
@@ -84,7 +80,7 @@ if uploaded_file is not None:
             if lw_rev > 0:
                 wow_rev_pct = (tw_rev - lw_rev) / lw_rev
             else:
-                wow_rev_pct = 0.0 if tw_rev == lw_rev else (1.0 if lw_rn == 0 else -1.0)
+                wow_rev_pct = 0.0 if tw_rev == lw_rev else (1.0 if lw_rev == 0 else -1.0)
                 
             if lw_adr > 0:
                 wow_adr_pct = (tw_adr - lw_adr) / lw_adr
@@ -194,7 +190,7 @@ if uploaded_file is not None:
         df_nat_sheet = pd.DataFrame(nat_rows)
 
         # =========================================================================
-        # 分頁四：EZ Share (維持原 RN 計算邏輯)
+        # 分頁四：EZ Share (維持原 Raw Data 的 RN 計算)
         # =========================================================================
         ez_rows = [
             ["MM", "Maintenance", f"{lw_label} (RN)", f"{tw_label} (RN)", "WoW 增減", f"{lw_label} (佔比)", f"{tw_label} (佔比)", "佔比 WoW 變動"]
@@ -237,7 +233,7 @@ if uploaded_file is not None:
         # =========================================================================
         # 預覽與下載
         # =========================================================================
-        st.success("🎉 篩選條件：Book Time、ADR = GMV / RN、已剔除無效取消件！數據對齊完畢。")
+        st.success("🎉 全量 Raw Data 轉換成功！已採用 Book Time 與加權 ADR 邏輯。")
         tab1, tab2, tab3, tab4 = st.tabs(["👤 MM概況 (RMB)", "🏨 城市&星級 (RMB)", "✈️ 各國籍概況 (RMB)", "📊 EZ Share"])
         with tab1: st.dataframe(df_mm_sheet, use_container_width=True)
         with tab2: st.dataframe(df_city_sheet, use_container_width=True)
@@ -279,9 +275,9 @@ if uploaded_file is not None:
             })
             
         st.download_button(
-            label="📥 下載「最終對齊校正版」Excel",
+            label="📥 下載「Raw Data 全量版」Excel",
             data=output.getvalue(),
-            file_name=f"New_Central_周報_最終對齊版_{tw_end.split('-')[1]}{tw_end.split('-')[2]}.xlsx",
+            file_name=f"New_Central_周報_RawData版_{tw_end.split('-')[1]}{tw_end.split('-')[2]}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
         
