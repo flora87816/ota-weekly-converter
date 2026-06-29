@@ -2,10 +2,10 @@ import streamlit as st
 import pandas as pd
 import io
 
-st.set_page_config(page_title="New Central 2026 週報標準轉換器 (人民幣統一版)", layout="wide")
+st.set_page_config(page_title="New Central 2026 週報標準轉換器 (人民幣精準對齊版)", layout="wide")
 
-st.title("📊 New Central 標準數據轉換工具 (統一人民幣 RMB 結算版)")
-st.write("此版本已自動將所有外幣（TWD, JPY 等）依匯率換算為**人民幣 (RMB)**，且修正了 ADR 的權重計算邏輯與 WoW 欄位。")
+st.title("📊 New Central 標準數據轉換工具 (Book Time + ADR=GMV/RN 最終對齊版)")
+st.write("此版本依據您的指示：以 **Book Time** 為時間篩選錨點、**ADR = GMV / RN**，並自動**剔除已取消訂單(OrderStatus='C')**以精準對齊 Excel 報表數字。")
 
 # 1. 日期與名稱設定
 col1, col2 = st.columns(2)
@@ -16,7 +16,7 @@ with col2:
     tw_start = st.text_input("當週 開始日期", "2026-06-19")
     tw_end = st.text_input("當週 結束日期", "2026-06-25")
 
-# 2. 匯率設定參數 (預設 2026 參考匯率，可在介面自由微調)
+# 2. 匯率設定參數 (可在介面依每週集團月匯率自由微調)
 st.sidebar.header("💱 人民幣匯率設定 (外幣轉 RMB)")
 rate_twd = st.sidebar.number_input("TWD 新台幣兌 RMB 匯率", value=0.222, format="%.4f")
 rate_jpy = st.sidebar.number_input("JPY 日圓兌 RMB 匯率", value=0.0465, format="%.4f")
@@ -38,13 +38,17 @@ uploaded_file = st.file_uploader("請上傳原始 Excel 檔案", type=["xlsx"])
 
 if uploaded_file is not None:
     try:
-        st.info("⚡ 正在進行貨幣轉換與精準 ADR 重新計算...")
+        st.info("⚡ 正在過濾無效訂單、轉換人民幣並精準校正 ADR...")
         
         # 讀取資料
         xls = pd.ExcelFile(uploaded_file)
         df = pd.read_excel(uploaded_file, sheet_name=xls.sheet_names[0])
         
-        # 轉換時間
+        # 【核心修正 1】防呆過濾：Excel 週報必須剔除 OrderStatus == 'C' (已取消) 的訂單，數據才對得起來
+        if 'OrderStatus' in df.columns:
+            df = df[df['OrderStatus'] != 'C']
+        
+        # 以 Book Time 為篩選錨點
         df['Book Time'] = pd.to_datetime(df['Book Time'])
         df['Book Date'] = df['Book Time'].dt.date
         
@@ -56,23 +60,22 @@ if uploaded_file is not None:
         lw_label = f"{lw_start.split('-')[1]}/{lw_start.split('-')[2]}-{lw_end.split('-')[1]}/{lw_end.split('-')[2]}"
         tw_label = f"{tw_start.split('-')[1]}/{tw_start.split('-')[2]}-{tw_end.split('-')[1]}/{tw_end.split('-')[2]}"
         
-        # --- 核心貨幣轉換：將 gmv 全面轉換為人民幣 ---
+        # 全面轉換 gmv 為人民幣
         df['gmv_rmb'] = df.apply(lambda row: convert_to_rmb(row['gmv'], row['Currency']), axis=1)
 
-        # --- 核心計算模組（修正 ADR 權重與變數對調 bug） ---
+        # --- 核心計算模組 ---
         def calc_wow_metrics_formatted(lw_df, tw_df):
             lw_rn = round(lw_df['RN'].sum(), 2)
             tw_rn = round(tw_df['RN'].sum(), 2)
             
-            # 轉換為人民幣後的總營收 REV (使用各自的子集，修正 tw_rev 誤用 lw_df 的問題)
             lw_rev = round(lw_df['gmv_rmb'].sum(), 2)
             tw_rev = round(tw_df['gmv_rmb'].sum(), 2)
             
-            # 【重要修正】ADR 的標準加權算法 = 總營收 (REV) / 總間夜數 (RN)
+            # 【核心修正 2】依您的指示：ADR = GMV (RMB) / RN
             lw_adr = round(lw_rev / lw_rn, 2) if lw_rn > 0 else 0.0
             tw_adr = round(tw_rev / tw_rn, 2) if tw_rn > 0 else 0.0
             
-            # 計算原始浮點數 WoW (增加防呆邊界處理)
+            # 計算 WoW 百分比 (處理分母為 0 的邊界)
             if lw_rn > 0:
                 wow_rn_pct = (tw_rn - lw_rn) / lw_rn
             else:
@@ -81,7 +84,7 @@ if uploaded_file is not None:
             if lw_rev > 0:
                 wow_rev_pct = (tw_rev - lw_rev) / lw_rev
             else:
-                wow_rev_pct = 0.0 if tw_rev == lw_rev else (1.0 if lw_rev == 0 else -1.0)
+                wow_rev_pct = 0.0 if tw_rev == lw_rev else (1.0 if lw_rn == 0 else -1.0)
                 
             if lw_adr > 0:
                 wow_adr_pct = (tw_adr - lw_adr) / lw_adr
@@ -234,7 +237,7 @@ if uploaded_file is not None:
         # =========================================================================
         # 預覽與下載
         # =========================================================================
-        st.success("🎉 全量數據（含精準 ADR 計算）已成功轉換！")
+        st.success("🎉 篩選條件：Book Time、ADR = GMV / RN、已剔除無效取消件！數據對齊完畢。")
         tab1, tab2, tab3, tab4 = st.tabs(["👤 MM概況 (RMB)", "🏨 城市&星級 (RMB)", "✈️ 各國籍概況 (RMB)", "📊 EZ Share"])
         with tab1: st.dataframe(df_mm_sheet, use_container_width=True)
         with tab2: st.dataframe(df_city_sheet, use_container_width=True)
@@ -253,7 +256,6 @@ if uploaded_file is not None:
             red_light_format = workbook.add_format({'bg_color': '#FFC7CE', 'font_color': '#9C0006'})
             red_num_format = workbook.add_format({'bg_color': '#FFC7CE', 'font_color': '#9C0006', 'num_format': '#,##0.00'})
 
-            # 前三頁格式化與負數標紅
             for sheet_name in ["MM概況", "城市星級概況", "各國籍概況"]:
                 ws = writer.sheets[sheet_name]
                 ws.set_column('A:A', 22)
@@ -264,7 +266,6 @@ if uploaded_file is not None:
                     'type': 'text', 'criteria': 'containing', 'value': '-', 'format': red_light_format
                 })
 
-            # 第四頁 EZ Share 格式化
             ws_ez = writer.sheets["EZ Share"]
             ws_ez.set_column('A:B', 15)
             ws_ez.set_column('C:E', 15, num_format)
@@ -278,9 +279,9 @@ if uploaded_file is not None:
             })
             
         st.download_button(
-            label="📥 下載「統一人民幣加權精準版」Excel",
+            label="📥 下載「最終對齊校正版」Excel",
             data=output.getvalue(),
-            file_name=f"New_Central_周報_人民幣精準版_{tw_end.split('-')[1]}{tw_end.split('-')[2]}.xlsx",
+            file_name=f"New_Central_周報_最終對齊版_{tw_end.split('-')[1]}{tw_end.split('-')[2]}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
         
