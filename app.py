@@ -2,10 +2,10 @@ import streamlit as st
 import pandas as pd
 import io
 
-st.set_page_config(page_title="New Central 2026 0629 標準轉換器 (全百分比修正版)", layout="wide")
+st.set_page_config(page_title="New Central 2026 0629 標準轉換器 (欄位校正版)", layout="wide")
 
-st.title("📊 New Central 標準數據轉換工具 (REV / ADR & 全百分比修正版)")
-st.write("此版本已修正 REV 與 ADR 計算邏輯，並將所有對比值（含 ADR WoW）全面轉換為**百分比 (%) 呈現（四捨五入）**。")
+st.title("📊 New Central 標準數據轉換工具 (REV: gmv / ADR: after_discount 平均)")
+st.write("此版本已將 **REV 修正為 gmv 總和**，**ADR 修正為 ordamount_afterdiscount 平均值**，且所有 WoW 欄位皆以**百分比 (%) 四捨五入**呈現。")
 
 # 1. 日期與名稱設定
 col1, col2 = st.columns(2)
@@ -21,7 +21,7 @@ uploaded_file = st.file_uploader("請上傳原始 Excel 檔案", type=["xlsx"])
 
 if uploaded_file is not None:
     try:
-        st.info("⚡ 正在嚴格校對 REV/ADR 數據並計算百分比中...")
+        st.info("⚡ 正在嚴格依據全新欄位定義 (REV=gmv, ADR=after_discount mean) 計算中...")
         
         # 讀取資料
         xls = pd.ExcelFile(uploaded_file)
@@ -41,24 +41,27 @@ if uploaded_file is not None:
         
         final_rows = []
         
-        # --- 核心計算模組：修正 REV、ADR 與全百分比 WoW 邏輯 ---
-        def calc_wow_metrics(lw_rn, lw_rev, tw_rn, tw_rev):
-            # 四捨五入基礎原始值
-            lw_rn_r = round(lw_rn, 2)
-            lw_rev_r = round(lw_rev, 2)
-            tw_rn_r = round(tw_rn, 2)
-            tw_rev_r = round(tw_rev, 2)
+        # --- 核心計算模組：處理全新的定義與百分比四捨五入 ---
+        def calc_wow_metrics(lw_df, tw_df):
+            # 1. RN 總和
+            lw_rn = round(lw_df['RN'].sum(), 2)
+            tw_rn = round(tw_df['RN'].sum(), 2)
             
-            # 正確計算整體 ADR = 總營收 / 總房晚
-            lw_adr = round(lw_rev_r / lw_rn_r, 2) if lw_rn_r > 0 else 0
-            tw_adr = round(tw_rev_r / tw_rn_r, 2) if tw_rn_r > 0 else 0
+            # 2. REV = gmv 欄位的總和
+            lw_rev = round(lw_df['gmv'].sum(), 2)
+            tw_rev = round(tw_df['gmv'].sum(), 2)
             
-            # 全面改為百分比 (%) 呈現，並嚴格四捨五入
-            wow_rn_pct = f"{round(((tw_rn_r - lw_rn_r) / lw_rn_r) * 100, 2):.2f}%" if lw_rn_r > 0 else "0.00%"
-            wow_rev_pct = f"{round(((tw_rev_r - lw_rev_r) / lw_rev_r) * 100, 2):.2f}%" if lw_rev_r > 0 else "0.00%"
+            # 3. ADR = ordamount_afterdiscount 欄位的平均值 (Mean)
+            # 若無數據則給 0
+            lw_adr = round(lw_df['ordamount_afterdiscount'].mean(), 2) if not lw_df.empty and lw_df['ordamount_afterdiscount'].notna().any() else 0
+            tw_adr = round(tw_df['ordamount_afterdiscount'].mean(), 2) if not tw_df.empty and tw_df['ordamount_afterdiscount'].notna().any() else 0
+            
+            # 4. WoW 百分比變動計算 (嚴格四捨五入至小數點後兩位)
+            wow_rn_pct = f"{round(((tw_rn - lw_rn) / lw_rn) * 100, 2):.2f}%" if lw_rn > 0 else "0.00%"
+            wow_rev_pct = f"{round(((tw_rev - lw_rev) / lw_rev) * 100, 2):.2f}%" if lw_rev > 0 else "0.00%"
             wow_adr_pct = f"{round(((tw_adr - lw_adr) / lw_adr) * 100, 2):.2f}%" if lw_adr > 0 else "0.00%"
             
-            return lw_rn_r, lw_rev_r, lw_adr, tw_rn_r, tw_rev_r, tw_adr, wow_rn_pct, wow_rev_pct, wow_adr_pct
+            return lw_rn, lw_rev, lw_adr, tw_rn, tw_rev, tw_adr, wow_rn_pct, wow_rev_pct, wow_adr_pct
 
         # =========================================================================
         # 區塊一：MM概況
@@ -85,13 +88,13 @@ if uploaded_file is not None:
             lw_m = lw_sub[lw_sub['Cleaned_MM'] == mm]
             tw_m = tw_sub[tw_sub['Cleaned_MM'] == mm]
             
-            metrics = calc_wow_metrics(lw_m['RN'].sum(), lw_m['ordamount_afterdiscount'].sum(), tw_m['RN'].sum(), tw_m['ordamount_afterdiscount'].sum())
+            metrics = calc_wow_metrics(lw_m, tw_m)
             final_rows.append(["", mm] + list(metrics))
             
         # Others 總計
         lw_oth = lw_sub[lw_sub['Cleaned_MM'] == 'Others']
         tw_oth = tw_sub[tw_sub['Cleaned_MM'] == 'Others']
-        oth_metrics = calc_wow_metrics(lw_oth['RN'].sum(), lw_oth['ordamount_afterdiscount'].sum(), tw_oth['RN'].sum(), tw_oth['ordamount_afterdiscount'].sum())
+        oth_metrics = calc_wow_metrics(lw_oth, tw_oth)
         final_rows.append(["", "others 總計"] + list(oth_metrics))
         
         final_rows.append([""] * 11)
@@ -112,7 +115,7 @@ if uploaded_file is not None:
                 lw_cs = lw_sub[(lw_sub['City'] == c) & (lw_sub['Star'] == s)]
                 tw_cs = tw_sub[(tw_sub['City'] == c) & (tw_sub['Star'] == s)]
                 
-                cs_metrics = calc_wow_metrics(lw_cs['RN'].sum(), lw_cs['ordamount_afterdiscount'].sum(), tw_cs['RN'].sum(), tw_cs['ordamount_afterdiscount'].sum())
+                cs_metrics = calc_wow_metrics(lw_cs, tw_cs)
                 final_rows.append(["", s] + list(cs_metrics))
                 
         final_rows.append([""] * 11)
@@ -139,10 +142,10 @@ if uploaded_file is not None:
                     lw_s = lw_c_df[lw_c_df['Ctrip/Trip site'] == site]
                     tw_s = tw_c_df[tw_c_df['Ctrip/Trip site'] == site]
                     
-                s_metrics = calc_wow_metrics(lw_s['RN'].sum(), lw_s['ordamount_afterdiscount'].sum(), tw_s['RN'].sum(), tw_s['ordamount_afterdiscount'].sum())
+                s_metrics = calc_wow_metrics(lw_s, tw_s)
                 final_rows.append(["", site] + list(s_metrics))
                 
-            tot_metrics = calc_wow_metrics(lw_c_df['RN'].sum(), lw_c_df['ordamount_afterdiscount'].sum(), tw_c_df['RN'].sum(), tw_c_df['ordamount_afterdiscount'].sum())
+            tot_metrics = calc_wow_metrics(lw_c_df, tw_c_df)
             final_rows.append(["", "Total"] + list(tot_metrics))
             final_rows.append([""] * 11)
 
@@ -173,7 +176,7 @@ if uploaded_file is not None:
                 
                 m_name = emm if first else ""
                 
-                # EZ Share 數量 WoW 維持量差，佔比變動改為百分比點數變動 (四捨五入)
+                # EZ Share 數量 WoW 維持量差，佔比變動採用百分比點數差額 (四捨五入)
                 final_rows.append([
                     "", m_name, d, round(lw_md, 2), round(tw_md, 2), round(tw_md - lw_md, 2), 
                     f"{round(l_ratio * 100, 2):.2f}%", f"{round(t_ratio * 100, 2):.2f}%", f"{round((t_ratio - l_ratio) * 100, 2):.2f}%", "", ""
@@ -184,7 +187,7 @@ if uploaded_file is not None:
 
         # 輸出處理
         out_df = pd.DataFrame(final_rows)
-        st.success("🎉 全百分比且數值校正版報表轉換完成！")
+        st.success("🎉 欄位校正與全四捨五入百分比報表轉換完成！")
         st.dataframe(out_df.fillna(""), use_container_width=True)
         
         output = io.BytesIO()
@@ -193,9 +196,9 @@ if uploaded_file is not None:
             out_df.to_excel(writer, sheet_name=sheet_title, index=False, header=False)
             
         st.download_button(
-            label="📥 下載全百分比修正版 Excel 報表",
+            label="📥 下載最終校正版 Excel 報表",
             data=output.getvalue(),
-            file_name=f"New_Central_周報_AllPct_{tw_end.split('-')[1]}{tw_end.split('-')[2]}.xlsx",
+            file_name=f"New_Central_周報_Final_{tw_end.split('-')[1]}{tw_end.split('-')[2]}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
         
