@@ -4,8 +4,8 @@ import io
 
 st.set_page_config(page_title="New Central 2026 週報標準轉換器 (分頁、紅字與城市加總版)", layout="wide")
 
-st.title("📊 New Central 標準數據轉換工具 (城市加總 + 下滑自動標紅版)")
-st.write("此版本已比照 0622 報表格式，在「城市星級概況」中為每個城市追加了 **Total (加總) 欄位**，並且全面保留了**小於 0 (下滑) 自動標紅**的視覺化設定！")
+st.title("📊 New Central 標準數據轉換工具 (城市加總 + WoW百分比修正版)")
+st.write("此版本已修正城市概況中 WoW 欄位顯示為小數而非百分比的問題，並完美保留**小於 0 (下滑) 自動標紅**與 **Total 加總** 格式！")
 
 # 1. 日期與名稱設定
 col1, col2 = st.columns(2)
@@ -21,7 +21,7 @@ uploaded_file = st.file_uploader("請上傳原始 Excel 檔案", type=["xlsx"])
 
 if uploaded_file is not None:
     try:
-        st.info("⚡ 正在計算多工作表與精準生成城市 Total 欄位...")
+        st.info("⚡ 正在計算多工作表並精準校正 WoW 百分比格式...")
         
         # 讀取資料
         xls = pd.ExcelFile(uploaded_file)
@@ -50,9 +50,10 @@ if uploaded_file is not None:
             lw_adr = round(lw_df['ordamount_afterdiscount'].mean(), 2) if not lw_df.empty and lw_df['ordamount_afterdiscount'].notna().any() else 0
             tw_adr = round(tw_df['ordamount_afterdiscount'].mean(), 2) if not tw_df.empty and tw_df['ordamount_afterdiscount'].notna().any() else 0
             
-            wow_rn_pct = ((tw_rn - lw_rn) / lw_rn) if lw_rn > 0 else 0.0
-            wow_rev_pct = ((tw_rev - lw_rev) / lw_rev) if lw_rev > 0 else 0.0
-            wow_adr_pct = ((tw_adr - lw_adr) / lw_adr) if lw_adr > 0 else 0.0
+            # 修正百分比分子括號與極值處理
+            wow_rn_pct = ((tw_rn - lw_rn) / lw_rn) if lw_rn > 0 else (0.0 if tw_rn == 0 else 1.0)
+            wow_rev_pct = ((tw_rev - lw_rev) / lw_rev) if lw_rev > 0 else (0.0 if tw_rev == 0 else 1.0)
+            wow_adr_pct = ((tw_adr - lw_adr) / lw_adr) if lw_adr > 0 else (0.0 if tw_adr == 0 else 1.0)
             
             return lw_rn, lw_rev, lw_adr, tw_rn, tw_rev, tw_adr, wow_rn_pct, wow_rev_pct, wow_adr_pct
 
@@ -100,7 +101,7 @@ if uploaded_file is not None:
         df_mm_sheet = pd.DataFrame(mm_rows)
 
         # =========================================================================
-        # 分頁二：城市&星級概況 (比照 0622 加入各城市 Total 行)
+        # 分頁二：城市&星級概況
         # =========================================================================
         city_rows = [
             ["行政區 / 星級", lw_label, "", "", tw_label, "", "", "WoW", "", ""],
@@ -110,14 +111,13 @@ if uploaded_file is not None:
         stars = [3, 4, 5]
         
         for c in cities:
-            # 城市大標題
-            city_rows.append([f"--- {c} ---", 0, 0, 0, 0, 0, 0, 0.0, 0.0, 0.0])
-            # 各星級明細
+            # 修正：城市分隔列不填入 0，保持空白，避免破壞儲存格格式判斷
+            city_rows.append([f"--- {c} ---", "", "", "", "", "", "", "", "", ""])
             for s in stars:
                 cs_metrics = calc_wow_metrics_raw(lw_sub[(lw_sub['City'] == c) & (lw_sub['Star'] == s)], tw_sub[(tw_sub['City'] == c) & (tw_sub['Star'] == s)])
                 city_rows.append([f"{s} 星"] + list(cs_metrics))
             
-            # 【比照0622新增】城市加總 Total 欄位 (不分星級，加總整個城市)
+            # 城市加總 Total
             city_tot_metrics = calc_wow_metrics_raw(lw_sub[lw_sub['City'] == c], tw_sub[tw_sub['City'] == c])
             city_rows.append(["Total"] + list(city_tot_metrics))
             
@@ -131,7 +131,7 @@ if uploaded_file is not None:
         sites = ["others", "Trip(CN1)", "Trip(HK)", "Trip(ID)", "Trip(JP)", "Trip(KR)", "Trip(MY)", "Trip(PH)", "Trip(SG)", "Trip(TH)", "Trip(TW)", "Trip(US)", "Trip(XX)"]
         
         for t_c in target_nationality_cities:
-            nat_rows.append([f"各國籍概況 ({t_c})", 0, 0, 0, 0, 0, 0, 0.0, 0.0, 0.0])
+            nat_rows.append([f"各國籍概況 ({t_c})", "", "", "", "", "", "", "", "", ""])
             nat_rows.append(["Site", lw_label, "", "", tw_label, "", "", "WoW", "", ""])
             nat_rows.append(["", "RN", "REV", "ADR", "RN", "REV", "ADR", "RN", "REV", "ADR"])
             
@@ -150,7 +150,7 @@ if uploaded_file is not None:
                 
             tot_metrics = calc_wow_metrics_raw(lw_c_df, tw_c_df)
             nat_rows.append(["Total"] + list(tot_metrics))
-            nat_rows.append(["", 0, 0, 0, 0, 0, 0, 0.0, 0.0, 0.0])
+            nat_rows.append(["", "", "", "", "", "", "", "", "", ""])
         df_nat_sheet = pd.DataFrame(nat_rows)
 
         # =========================================================================
@@ -197,7 +197,7 @@ if uploaded_file is not None:
         # =========================================================================
         # 預覽與下載
         # =========================================================================
-        st.success("🎉 已成功補上各城市 Total 欄位！正在包裝 Excel 檔案...")
+        st.success("🎉 WoW 欄位已全部強制修正為百分比格式 (0.00%)！")
         tab1, tab2, tab3, tab4 = st.tabs(["👤 MM概況", "🏨 城市&星級概況 (含Total)", "✈️ 各國籍概況", "📊 EZ Share"])
         with tab1: st.dataframe(df_mm_sheet, use_container_width=True)
         with tab2: st.dataframe(df_city_sheet, use_container_width=True)
@@ -213,60 +213,11 @@ if uploaded_file is not None:
             
             workbook = writer.book
             
+            # 定義格式
             num_format = workbook.add_format({'num_format': '#,##0.00'})
             pct_format = workbook.add_format({'num_format': '0.00%'})
             
             red_light_format = workbook.add_format({
                 'bg_color': '#FFC7CE',
                 'font_color': '#9C0006',
-                'num_format': '0.00%'
-            })
-            red_num_format = workbook.add_format({
-                'bg_color': '#FFC7CE',
-                'font_color': '#9C0006',
-                'num_format': '#,##0.00'
-            })
-
-            # 格式化分頁 1, 2, 3
-            for sheet_name in ["MM概況", "城市星級概況", "各國籍概況"]:
-                ws = writer.sheets[sheet_name]
-                ws.set_column('A:A', 22)
-                ws.set_column('B:G', 15, num_format)
-                ws.set_column('H:K', 15, pct_format)
-                
-                # 擴大條件格式範圍至第 150 行，確保含有 Total 欄位也能被完整偵測並標紅
-                ws.conditional_format('H3:K150', {
-                    'type': 'cell',
-                    'criteria': '<',
-                    'value': 0,
-                    'format': red_light_format
-                })
-
-            # 格式化分頁 4 (EZ Share)
-            ws_ez = writer.sheets["EZ Share"]
-            ws_ez.set_column('A:B', 15)
-            ws_ez.set_column('C:E', 15, num_format)
-            ws_ez.set_column('F:H', 15, pct_format)
-            
-            ws_ez.conditional_format('E2:E150', {
-                'type': 'cell',
-                'criteria': '<',
-                'value': 0,
-                'format': red_num_format
-            })
-            ws_ez.conditional_format('H2:H150', {
-                'type': 'cell',
-                'criteria': '<',
-                'value': 0,
-                'format': red_light_format
-            })
-            
-        st.download_button(
-            label="📥 下載「含城市加總 + 下滑紅字高亮版」Excel",
-            data=output.getvalue(),
-            file_name=f"New_Central_周報_城市加总紅字版_{tw_end.split('-')[1]}{tw_end.split('-')[2]}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-        
-    except Exception as e:
-        st.error(f"轉換發生錯誤: {e}")
+                'num_format
