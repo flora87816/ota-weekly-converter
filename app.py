@@ -2,10 +2,10 @@ import streamlit as st
 import pandas as pd
 import io
 
-st.set_page_config(page_title="New Central 2026 週報標準轉換器 (分頁、紅字與城市加總版)", layout="wide")
+st.set_page_config(page_title="New Central 2026 週報標準轉換器 (百分比強制修正版)", layout="wide")
 
-st.title("📊 New Central 標準數據轉換工具 (城市加總 + WoW百分比修正版)")
-st.write("此版本已修正城市概況中 WoW 欄位顯示為小數而非百分比的問題，並完美保留**小於 0 (下滑) 自動標紅**與 **Total 加總** 格式！")
+st.title("📊 New Central 標準數據轉換工具 (WoW百分比字串強制修正版)")
+st.write("此版本已將所有 WoW 欄位在 DataFrame 階段就直接格式化為 `XX.XX%` 字串，確保網頁預覽與 Excel 匯出絕對是百分比！")
 
 # 1. 日期與名稱設定
 col1, col2 = st.columns(2)
@@ -21,7 +21,7 @@ uploaded_file = st.file_uploader("請上傳原始 Excel 檔案", type=["xlsx"])
 
 if uploaded_file is not None:
     try:
-        st.info("⚡ 正在計算多工作表並精準校正 WoW 百分比格式...")
+        st.info("⚡ 正在轉換並強制格式化 WoW 百分比欄位...")
         
         # 讀取資料
         xls = pd.ExcelFile(uploaded_file)
@@ -39,8 +39,8 @@ if uploaded_file is not None:
         lw_label = f"{lw_start.split('-')[1]}/{lw_start.split('-')[2]}-{lw_end.split('-')[1]}/{lw_end.split('-')[2]}"
         tw_label = f"{tw_start.split('-')[1]}/{tw_start.split('-')[2]}-{tw_end.split('-')[1]}/{tw_end.split('-')[2]}"
         
-        # --- 核心計算模組 ---
-        def calc_wow_metrics_raw(lw_df, tw_df):
+        # --- 核心計算模組（回傳格式化好的字串或標記） ---
+        def calc_wow_metrics_formatted(lw_df, tw_df):
             lw_rn = round(lw_df['RN'].sum(), 2)
             tw_rn = round(tw_df['RN'].sum(), 2)
             
@@ -50,12 +50,19 @@ if uploaded_file is not None:
             lw_adr = round(lw_df['ordamount_afterdiscount'].mean(), 2) if not lw_df.empty and lw_df['ordamount_afterdiscount'].notna().any() else 0
             tw_adr = round(tw_df['ordamount_afterdiscount'].mean(), 2) if not tw_df.empty and tw_df['ordamount_afterdiscount'].notna().any() else 0
             
-            # 修正百分比分子括號與極值處理
+            # 計算原始浮點數
             wow_rn_pct = ((tw_rn - lw_rn) / lw_rn) if lw_rn > 0 else (0.0 if tw_rn == 0 else 1.0)
             wow_rev_pct = ((tw_rev - lw_rev) / lw_rev) if lw_rev > 0 else (0.0 if tw_rev == 0 else 1.0)
             wow_adr_pct = ((tw_adr - lw_adr) / lw_adr) if lw_adr > 0 else (0.0 if tw_adr == 0 else 1.0)
             
-            return lw_rn, lw_rev, lw_adr, tw_rn, tw_rev, tw_adr, wow_rn_pct, wow_rev_pct, wow_adr_pct
+            # 直接強制格式化為字串，確保顯示
+            return [
+                lw_rn, lw_rev, lw_adr, 
+                tw_rn, tw_rev, tw_adr, 
+                f"{wow_rn_pct * 100:.2f}%", 
+                f"{wow_rev_pct * 100:.2f}%", 
+                f"{wow_adr_pct * 100:.2f}%"
+            ]
 
         # 名字配對邏輯
         standard_mms = [
@@ -94,10 +101,10 @@ if uploaded_file is not None:
             ["", "RN", "REV", "ADR", "RN", "REV", "ADR", "RN", "REV", "ADR"]
         ]
         for mm in standard_mms:
-            metrics = calc_wow_metrics_raw(lw_sub[lw_sub['Cleaned_MM'] == mm], tw_sub[tw_sub['Cleaned_MM'] == mm])
-            mm_rows.append([mm] + list(metrics))
-        oth_metrics = calc_wow_metrics_raw(lw_sub[lw_sub['Cleaned_MM'] == 'Others'], tw_sub[tw_sub['Cleaned_MM'] == 'Others'])
-        mm_rows.append(["others 總計"] + list(oth_metrics))
+            metrics = calc_wow_metrics_formatted(lw_sub[lw_sub['Cleaned_MM'] == mm], tw_sub[tw_sub['Cleaned_MM'] == mm])
+            mm_rows.append([mm] + metrics)
+        oth_metrics = calc_wow_metrics_formatted(lw_sub[lw_sub['Cleaned_MM'] == 'Others'], tw_sub[tw_sub['Cleaned_MM'] == 'Others'])
+        mm_rows.append(["others 總計"] + oth_metrics)
         df_mm_sheet = pd.DataFrame(mm_rows)
 
         # =========================================================================
@@ -111,15 +118,13 @@ if uploaded_file is not None:
         stars = [3, 4, 5]
         
         for c in cities:
-            # 修正：城市分隔列不填入 0，保持空白，避免破壞儲存格格式判斷
             city_rows.append([f"--- {c} ---", "", "", "", "", "", "", "", "", ""])
             for s in stars:
-                cs_metrics = calc_wow_metrics_raw(lw_sub[(lw_sub['City'] == c) & (lw_sub['Star'] == s)], tw_sub[(tw_sub['City'] == c) & (tw_sub['Star'] == s)])
-                city_rows.append([f"{s} 星"] + list(cs_metrics))
+                cs_metrics = calc_wow_metrics_formatted(lw_sub[(lw_sub['City'] == c) & (lw_sub['Star'] == s)], tw_sub[(tw_sub['City'] == c) & (tw_sub['Star'] == s)])
+                city_rows.append([f"{s} 星"] + cs_metrics)
             
-            # 城市加總 Total
-            city_tot_metrics = calc_wow_metrics_raw(lw_sub[lw_sub['City'] == c], tw_sub[tw_sub['City'] == c])
-            city_rows.append(["Total"] + list(city_tot_metrics))
+            city_tot_metrics = calc_wow_metrics_formatted(lw_sub[lw_sub['City'] == c], tw_sub[tw_sub['City'] == c])
+            city_rows.append(["Total"] + city_tot_metrics)
             
         df_city_sheet = pd.DataFrame(city_rows)
 
@@ -145,16 +150,16 @@ if uploaded_file is not None:
                 else:
                     lw_s = lw_c_df[lw_c_df['Ctrip/Trip site'] == site]
                     tw_s = tw_c_df[tw_c_df['Ctrip/Trip site'] == site]
-                s_metrics = calc_wow_metrics_raw(lw_s, tw_s)
-                nat_rows.append([site] + list(s_metrics))
+                s_metrics = calc_wow_metrics_formatted(lw_s, tw_s)
+                nat_rows.append([site] + s_metrics)
                 
-            tot_metrics = calc_wow_metrics_raw(lw_c_df, tw_c_df)
-            nat_rows.append(["Total"] + list(tot_metrics))
+            tot_metrics = calc_wow_metrics_formatted(lw_c_df, tw_c_df)
+            nat_rows.append(["Total"] + tot_metrics)
             nat_rows.append(["", "", "", "", "", "", "", "", "", ""])
         df_nat_sheet = pd.DataFrame(nat_rows)
 
         # =========================================================================
-        # 分頁四：EZ Share
+        # 分頁四：EZ Share (佔比與變動也強制轉字串百分比)
         # =========================================================================
         ez_rows = [
             ["MM", "Maintenance", f"{lw_label} (RN)", f"{tw_label} (RN)", "WoW 增減", f"{lw_label} (佔比)", f"{tw_label} (佔比)", "佔比 WoW 變動"]
@@ -188,17 +193,17 @@ if uploaded_file is not None:
                 
                 ez_rows.append([
                     m_name, d, round(lw_md, 2), round(tw_md, 2), round(tw_md - lw_md, 2), 
-                    l_ratio, t_ratio, (t_ratio - l_ratio)
+                    f"{l_ratio * 100:.2f}%", f"{t_ratio * 100:.2f}%", f"{(t_ratio - l_ratio) * 100:.2f}%"
                 ])
                 first = False
-            ez_rows.append(["", "Total", round(lw_m_tot, 2), round(tw_m_tot, 2), round(tw_m_tot - lw_m_tot, 2), 1.0, 1.0, 0.0])
+            ez_rows.append(["", "Total", round(lw_m_tot, 2), round(tw_m_tot, 2), round(tw_m_tot - lw_m_tot, 2), "100.00%", "100.00%", "0.00%"])
         df_ez_sheet = pd.DataFrame(ez_rows)
 
         # =========================================================================
         # 預覽與下載
         # =========================================================================
-        st.success("🎉 WoW 欄位已全部強制修正為百分比格式 (0.00%)！")
-        tab1, tab2, tab3, tab4 = st.tabs(["👤 MM概況", "🏨 城市&星級概況 (含Total)", "✈️ 各國籍概況", "📊 EZ Share"])
+        st.success("🎉 數據已全面在程式底層轉為百分比字串，匯出與預覽保證正確！")
+        tab1, tab2, tab3, tab4 = st.tabs(["👤 MM概況", "🏨 城市&星級概況", "✈️ 各國籍概況", "📊 EZ Share"])
         with tab1: st.dataframe(df_mm_sheet, use_container_width=True)
         with tab2: st.dataframe(df_city_sheet, use_container_width=True)
         with tab3: st.dataframe(df_nat_sheet, use_container_width=True)
@@ -212,15 +217,12 @@ if uploaded_file is not None:
             df_ez_sheet.to_excel(writer, sheet_name="EZ Share", index=False, header=False)
             
             workbook = writer.book
-            
-            # 定義格式
             num_format = workbook.add_format({'num_format': '#,##0.00'})
-            pct_format = workbook.add_format({'num_format': '0.00%'})
             
+            # 因為現在變成了字串，條件格式化改用「包含負號 -」來識別下滑標紅
             red_light_format = workbook.add_format({
                 'bg_color': '#FFC7CE',
-                'font_color': '#9C0006',
-                'num_format': '0.00%'
+                'font_color': '#9C0006'
             })
             red_num_format = workbook.add_format({
                 'bg_color': '#FFC7CE',
@@ -228,44 +230,46 @@ if uploaded_file is not None:
                 'num_format': '#,##0.00'
             })
 
-            # 格式化前三個分頁 (確保 H 到 J 欄強制為百分比)
+            # 前三頁欄位寬度與標紅設定
             for sheet_name in ["MM概況", "城市星級概況", "各國籍概況"]:
                 ws = writer.sheets[sheet_name]
                 ws.set_column('A:A', 22)
-                ws.set_column('B:G', 15, num_format) # B,C,D,E,F,G 是數值
-                ws.set_column('H:J', 15, pct_format) # H,I,J 是 WoW 百分比 (精準覆蓋第8、9、10欄)
+                ws.set_column('B:G', 15, num_format)
+                ws.set_column('H:J', 15) # 百分比字串欄位
                 
-                # 條件格式化標紅 (只限 WoW 欄位範圍)
+                # 使用 text 定位，只要字串裡包含「-」代表負成長，就自動標紅！
                 ws.conditional_format('H3:J200', {
-                    'type': 'cell',
-                    'criteria': '<',
-                    'value': 0,
+                    'type': 'text',
+                    'criteria': 'containing',
+                    'value': '-',
                     'format': red_light_format
                 })
 
-            # 格式化分頁 4 (EZ Share)
+            # 第四頁 EZ Share 欄位與標紅設定
             ws_ez = writer.sheets["EZ Share"]
             ws_ez.set_column('A:B', 15)
             ws_ez.set_column('C:E', 15, num_format)
-            ws_ez.set_column('F:H', 15, pct_format)
+            ws_ez.set_column('F:H', 15)
             
+            # E欄是純數字增減，維持原本的小於0標紅
             ws_ez.conditional_format('E2:E200', {
                 'type': 'cell',
                 'criteria': '<',
                 'value': 0,
                 'format': red_num_format
             })
+            # H欄是百分比字串變動，用包含負號標紅
             ws_ez.conditional_format('H2:H200', {
-                'type': 'cell',
-                'criteria': '<',
-                'value': 0,
+                'type': 'text',
+                'criteria': 'containing',
+                'value': '-',
                 'format': red_light_format
             })
             
         st.download_button(
-            label="📥 下載「全面校正 WoW 百分比版」Excel",
+            label="📥 下載「強制轉字串百分比版」Excel",
             data=output.getvalue(),
-            file_name=f"New_Central_周報_完美百分比版_{tw_end.split('-')[1]}{tw_end.split('-')[2]}.xlsx",
+            file_name=f"New_Central_周報_強制百分比版_{tw_end.split('-')[1]}{tw_end.split('-')[2]}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
         
