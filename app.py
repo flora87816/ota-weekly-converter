@@ -220,4 +220,54 @@ if uploaded_file is not None:
             red_light_format = workbook.add_format({
                 'bg_color': '#FFC7CE',
                 'font_color': '#9C0006',
-                'num_format
+                'num_format': '0.00%'
+            })
+            red_num_format = workbook.add_format({
+                'bg_color': '#FFC7CE',
+                'font_color': '#9C0006',
+                'num_format': '#,##0.00'
+            })
+
+            # 格式化前三個分頁 (確保 H 到 J 欄強制為百分比)
+            for sheet_name in ["MM概況", "城市星級概況", "各國籍概況"]:
+                ws = writer.sheets[sheet_name]
+                ws.set_column('A:A', 22)
+                ws.set_column('B:G', 15, num_format) # B,C,D,E,F,G 是數值
+                ws.set_column('H:J', 15, pct_format) # H,I,J 是 WoW 百分比 (精準覆蓋第8、9、10欄)
+                
+                # 條件格式化標紅 (只限 WoW 欄位範圍)
+                ws.conditional_format('H3:J200', {
+                    'type': 'cell',
+                    'criteria': '<',
+                    'value': 0,
+                    'format': red_light_format
+                })
+
+            # 格式化分頁 4 (EZ Share)
+            ws_ez = writer.sheets["EZ Share"]
+            ws_ez.set_column('A:B', 15)
+            ws_ez.set_column('C:E', 15, num_format)
+            ws_ez.set_column('F:H', 15, pct_format)
+            
+            ws_ez.conditional_format('E2:E200', {
+                'type': 'cell',
+                'criteria': '<',
+                'value': 0,
+                'format': red_num_format
+            })
+            ws_ez.conditional_format('H2:H200', {
+                'type': 'cell',
+                'criteria': '<',
+                'value': 0,
+                'format': red_light_format
+            })
+            
+        st.download_button(
+            label="📥 下載「全面校正 WoW 百分比版」Excel",
+            data=output.getvalue(),
+            file_name=f"New_Central_周報_完美百分比版_{tw_end.split('-')[1]}{tw_end.split('-')[2]}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        
+    except Exception as e:
+        st.error(f"轉換發生錯誤: {e}")
